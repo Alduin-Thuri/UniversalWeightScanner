@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="UniversalWeightScanner/UniversalWeightScanner.vcxproj" Id="8698bfa6-0b66-40bc-ae3c-eceabb5960e4" />
+</Solution>

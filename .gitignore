@@ -1,0 +1,24 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Xmake
+.xmake/
+build/
+x64/
+
+# Compiled files
+*.obj
+*.pdb
+*.ilk
+*.dll
+*.exe
+
+# Logs
+*.log
+*.tmp
+
+# Unused CommonLibSSE-NG copies
+/lib/commonlibsse-ng/
+/lib/commonlibsse-ng-complete/
