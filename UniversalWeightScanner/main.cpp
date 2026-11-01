@@ -27,6 +27,7 @@ namespace UWS
 
     std::array categories{
         Category{ RE::FormType::Armor, "Armor" },
+        Category{ RE::FormType::Armor, "Jewelry" },
         Category{ RE::FormType::Weapon, "Weapon" },
         Category{ RE::FormType::Ammo, "Ammo" },
         Category{ RE::FormType::Misc, "Misc" },
@@ -71,7 +72,7 @@ namespace UWS
         std::filesystem::create_directories(path.parent_path(), ec);
         std::ofstream out(path);
         if (!out) return;
-        out << "; UniversalWeightScanner v1.0.0\n"
+        out << "; UniversalWeightScanner v1.0.1\n"
             "; Changes base-record weights in memory after data loading.\n"
             "; All categories are disabled by default.\n"
             "; Set Enabled=true for categories you want to change.\n"
@@ -79,7 +80,8 @@ namespace UWS
             "; Weight must be a finite number >= 0.\n\n"
             "[General]\nDebugLog=false\n";
         static constexpr std::pair<std::string_view, std::string_view> descriptions[]{
-            { "Armor", "Armor, clothing, helmets, boots, gloves and shields." },
+            { "Armor", "Armor and clothing excluding jewelry (rings, amulets and circlets)." },
+            { "Jewelry", "Equippable rings (36), amulets (35), and circlets (42), including mod-added items using those slots." },
             { "Weapon", "Swords, axes, bows, daggers, staves and other weapons." },
             { "Ammo", "Arrows, bolts and other ammunition." },
             { "Misc", "Miscellaneous items such as clutter, gems, ingots and crafting materials." },
@@ -100,7 +102,9 @@ namespace UWS
                     break;
                 }
             }
-            out << "[" << category.name << "]\nEnabled=false\nWeight=0.0\n";
+            out << "[" << category.name << "]\nEnabled="
+                << (std::string_view(category.name) == "Jewelry" ? "true" : "false")
+                << "\nWeight=0.0\n";
         }
     }
 
@@ -120,6 +124,9 @@ namespace UWS
             return;
         }
 
+        // Detect missing sections without replacing existing user settings.
+        // New sections are appended after the existing config has been read.
+        std::array<bool, categories.size()> foundSections{};
         std::string section, line;
         std::size_t lineNo = 0;
         while (std::getline(in, line)) {
@@ -128,6 +135,9 @@ namespace UWS
             if (line.empty() || line[0] == ';' || line[0] == '#') continue;
             if (line.front() == '[' && line.back() == ']') {
                 section = Lower(Trim(line.substr(1, line.size() - 2)));
+                for (std::size_t i = 0; i < categories.size(); ++i) {
+                    if (section == Lower(categories[i].name)) foundSections[i] = true;
+                }
                 continue;
             }
             const auto pos = line.find('=');
@@ -174,6 +184,42 @@ namespace UWS
                 break;
             }
         }
+
+        in.close();
+        bool needsUpdate = false;
+        for (bool found : foundSections) {
+            if (!found) { needsUpdate = true; break; }
+        }
+        if (needsUpdate) {
+            std::ofstream append(path, std::ios::app);
+            if (!append) {
+                log << "WARNING: Could not append missing config categories\n";
+            }
+            else {
+                for (std::size_t i = 0; i < categories.size(); ++i) {
+                    if (foundSections[i]) continue;
+                    const bool enableNewJewelry = std::string_view(categories[i].name) == "Jewelry";
+                    append << "\n; Added automatically by UniversalWeightScanner v1.0.2.\n"
+                        << "[" << categories[i].name << "]\n"
+                        << "Enabled=" << (enableNewJewelry ? "true" : "false") << "\nWeight=0.0\n";
+                    if (enableNewJewelry) categories[i].enabled = true;
+                    log << "INFO: Added missing config section [" << categories[i].name
+                        << "] (Enabled=" << (enableNewJewelry ? "true" : "false") << ")\n";
+                }
+            }
+        }
+    }
+
+    // Skyrim biped slot numbers are represented as bits starting at slot 30.
+    // Only exclusive jewelry slots (35, 36, 42) qualify; multi-slot armor
+    // combining jewelry and non-jewelry slots remains in Armor.
+    bool IsJewelry(const RE::TESObjectARMO* armor)
+    {
+        if (!armor) return false;
+        constexpr std::uint32_t jewelryMask =
+            (1u << (35 - 30)) | (1u << (36 - 30)) | (1u << (42 - 30));
+        const auto slots = armor->GetSlotMask().underlying();
+        return (slots & jewelryMask) != 0 && (slots & ~jewelryMask) == 0;
     }
 
     void ScanAndApply()
@@ -184,7 +230,7 @@ namespace UWS
         std::ofstream log(logPath, std::ios::trunc);
         if (!log) return;
 
-        log << "UniversalWeightScanner v1.0.0\n"
+        log << "UniversalWeightScanner v1.0.2\n"
             << "Mode: Configurable weights\n"
             << "Event: kDataLoaded\n"
             << "================================\n";
@@ -216,6 +262,12 @@ namespace UWS
             log << "[" << category.name << "] Target weight: " << category.weight << '\n';
             for (auto* form : forms) {
                 if (!form) continue;
+                if (category.type == RE::FormType::Armor) {
+                    const auto* armor = skyrim_cast<RE::TESObjectARMO*>(form);
+                    const bool isJewelry = IsJewelry(armor);
+                    if (std::string_view(category.name) == "Jewelry" ? !isJewelry : isJewelry)
+                        continue;
+                }
                 ++records;
                 auto* weightForm = skyrim_cast<RE::TESWeightForm*>(form);
                 if (!weightForm) {
@@ -259,6 +311,7 @@ namespace UWS
             << "Weights unchanged: " << totalUnchanged << '\n'
             << "Unsupported records: " << totalUnsupported << '\n';
         // Disabled categories are intentionally excluded from scan totals.
+        // Armor and Jewelry are disjoint subsets of ARMO; no record is applied twice.
     }
 
     void OnMessage(SKSE::MessagingInterface::Message* message)
